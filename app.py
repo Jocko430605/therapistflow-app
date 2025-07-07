@@ -1,22 +1,19 @@
+
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import datetime
+from schedule import session_panel
+from calendar_ui import calendar_view
+from recovery_guard import burnout_chart
 
-st.set_page_config(page_title="TherapistFlow", page_icon="🧠", layout="wide")
-st.title("🧠 TherapistFlow – Burnout Risk Tracker")
+st.set_page_config(page_title="TherapistFlow", layout="wide")
+st.title("🧠 TherapistFlow Assistant")
 
-# Simulated daily burnout scores
-today = datetime.date.today()
-days = [today - datetime.timedelta(days=i) for i in range(30)][::-1]
-scores = [round(0.4 + 0.5 * abs((15 - i) / 15) + 0.1 * (-1) ** i, 2) for i in range(30)]
+tabs = st.tabs(["📋 Schedule", "📅 Calendar", "🔥 Recovery AI"])
 
-df = pd.DataFrame({
-    "Date": days,
-    "Burnout Risk": scores
-})
+with tabs[0]:
+    session_panel()
 
-st.subheader("📆 Your 30-Day Burnout Curve")
-fig = px.line(df, x="Date", y="Burnout Risk", markers=True, title="Daily Burnout Risk Score")
-fig.update_yaxes(range=[0, 1], title="Risk (0 = Low, 1 = High)")
-st.plotly_chart(fig)
+with tabs[1]:
+    calendar_view()
+
+with tabs[2]:
+    burnout_chart()
