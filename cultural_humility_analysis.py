@@ -28,6 +28,15 @@ from google.colab import files
 # ----------------------------
 YOUR_EMAIL = "justinjacques@humantheorygroup.com"
 
+# API MAXIMUM LIMITS (articles per query):
+# - arXiv: 2,000
+# - DOAJ: 100 (per request limit)
+# - Europe PMC: 1,000
+# - ERIC: 2,000
+# - NIH/PubMed: 500 (recommended max)
+# - DOE OSTI: 1,000
+# - NASA STI: 1,000
+
 cultural_terms = ["cultural humility", "cultural competence", "cultural awareness"]
 discipline_terms = ["nursing", "medicine", "public health", "counseling", "psychology", "social work", "therapy"]
 year_range = list(range(2015, 2026))
@@ -56,12 +65,12 @@ class FreeAcademicAPIs:
             'nasa': 'https://ntrs.nasa.gov/api/citations/search'
         }
 
-    def search_arxiv(self, query: str, max_results: int = 100) -> list:
-        """Search arXiv for academic papers"""
-        print(f"  📚 Searching arXiv...")
+    def search_arxiv(self, query: str, max_results: int = 2000) -> list:
+        """Search arXiv for academic papers (MAX: 2000)"""
+        print(f"  📚 Searching arXiv (requesting up to {max_results})...")
         try:
             params = {'search_query': query, 'max_results': max_results, 'start': 0}
-            response = requests.get(self.base_urls['arxiv'], params=params, timeout=15)
+            response = requests.get(self.base_urls['arxiv'], params=params, timeout=30)
             root = ET.fromstring(response.content)
             papers = []
             for entry in root.findall('{http://www.w3.org/2005/Atom}entry'):
@@ -82,11 +91,11 @@ class FreeAcademicAPIs:
             return []
 
     def search_doaj(self, query: str, max_results: int = 100) -> list:
-        """Search Directory of Open Access Journals"""
-        print(f"  📚 Searching DOAJ...")
+        """Search Directory of Open Access Journals (MAX: 100 per request)"""
+        print(f"  📚 Searching DOAJ (requesting up to {max_results})...")
         try:
             params = {'q': query, 'pageSize': max_results}
-            response = requests.get(self.base_urls['doaj'], params=params, timeout=15)
+            response = requests.get(self.base_urls['doaj'], params=params, timeout=20)
             data = response.json()
             papers = []
             for article in data.get('results', []):
@@ -103,9 +112,9 @@ class FreeAcademicAPIs:
             print(f"    ⚠️ DOAJ error: {e}")
             return []
 
-    def search_europe_pmc(self, query: str, max_results: int = 100) -> list:
-        """Search Europe PubMed Central"""
-        print(f"  📚 Searching Europe PMC...")
+    def search_europe_pmc(self, query: str, max_results: int = 1000) -> list:
+        """Search Europe PubMed Central (MAX: 1000)"""
+        print(f"  📚 Searching Europe PMC (requesting up to {max_results})...")
         try:
             params = {
                 'query': query,
@@ -113,7 +122,7 @@ class FreeAcademicAPIs:
                 'pageSize': max_results,
                 'resultType': 'core'
             }
-            response = requests.get(self.base_urls['europe_pmc'], params=params, timeout=15)
+            response = requests.get(self.base_urls['europe_pmc'], params=params, timeout=30)
             data = response.json()
             papers = []
             for article in data.get('resultList', {}).get('result', []):
@@ -129,12 +138,12 @@ class FreeAcademicAPIs:
             print(f"    ⚠️ Europe PMC error: {e}")
             return []
 
-    def search_eric(self, query: str, max_results: int = 100) -> list:
-        """Search ERIC (Education Resources Information Center)"""
-        print(f"  📚 Searching ERIC...")
+    def search_eric(self, query: str, max_results: int = 2000) -> list:
+        """Search ERIC - Education Resources Information Center (MAX: 2000)"""
+        print(f"  📚 Searching ERIC (requesting up to {max_results})...")
         try:
             params = {'search': query, 'rows': max_results, 'format': 'json'}
-            response = requests.get(self.base_urls['eric'], params=params, timeout=15)
+            response = requests.get(self.base_urls['eric'], params=params, timeout=30)
             data = response.json()
             papers = []
             for article in data.get('response', {}).get('docs', []):
@@ -150,13 +159,13 @@ class FreeAcademicAPIs:
             print(f"    ⚠️ ERIC error: {e}")
             return []
 
-    def search_nih(self, query: str, max_results: int = 100) -> list:
-        """Search NIH/PubMed"""
-        print(f"  📚 Searching NIH/PubMed...")
+    def search_nih(self, query: str, max_results: int = 500) -> list:
+        """Search NIH/PubMed (MAX: 500 recommended)"""
+        print(f"  📚 Searching NIH/PubMed (requesting up to {max_results})...")
         try:
             search_url = f"{self.base_urls['nih']}esearch.fcgi"
             search_params = {'db': 'pubmed', 'term': query, 'retmax': max_results, 'retmode': 'json'}
-            search_resp = requests.get(search_url, params=search_params, timeout=15)
+            search_resp = requests.get(search_url, params=search_params, timeout=30)
             pmids = search_resp.json().get('esearchresult', {}).get('idlist', [])
 
             if not pmids:
@@ -165,7 +174,7 @@ class FreeAcademicAPIs:
 
             fetch_url = f"{self.base_urls['nih']}efetch.fcgi"
             fetch_params = {'db': 'pubmed', 'id': ','.join(pmids[:max_results]), 'retmode': 'xml'}
-            fetch_resp = requests.get(fetch_url, params=fetch_params, timeout=15)
+            fetch_resp = requests.get(fetch_url, params=fetch_params, timeout=45)
             root = ET.fromstring(fetch_resp.content)
 
             papers = []
@@ -185,12 +194,12 @@ class FreeAcademicAPIs:
             print(f"    ⚠️ NIH/PubMed error: {e}")
             return []
 
-    def search_doe(self, query: str, max_results: int = 100) -> list:
-        """Search DOE OSTI (Department of Energy)"""
-        print(f"  📚 Searching DOE OSTI...")
+    def search_doe(self, query: str, max_results: int = 1000) -> list:
+        """Search DOE OSTI - Department of Energy (MAX: 1000)"""
+        print(f"  📚 Searching DOE OSTI (requesting up to {max_results})...")
         try:
             params = {'query': query, 'size': max_results}
-            response = requests.get(self.base_urls['doe'], params=params, timeout=15)
+            response = requests.get(self.base_urls['doe'], params=params, timeout=30)
             data = response.json()
             papers = []
             for record in data.get('records', []):
@@ -206,12 +215,12 @@ class FreeAcademicAPIs:
             print(f"    ⚠️ DOE OSTI error: {e}")
             return []
 
-    def search_nasa(self, query: str, max_results: int = 100) -> list:
-        """Search NASA STI"""
-        print(f"  📚 Searching NASA STI...")
+    def search_nasa(self, query: str, max_results: int = 1000) -> list:
+        """Search NASA STI - Scientific and Technical Information (MAX: 1000)"""
+        print(f"  📚 Searching NASA STI (requesting up to {max_results})...")
         try:
             params = {'q': query, 'page.size': max_results}
-            response = requests.get(self.base_urls['nasa'], params=params, timeout=15)
+            response = requests.get(self.base_urls['nasa'], params=params, timeout=30)
             data = response.json()
             papers = []
             for doc in data.get('hits', []):
@@ -232,6 +241,16 @@ class FreeAcademicAPIs:
 # ----------------------------
 print("\n🌐 FETCHING FROM FREE ACADEMIC & GOVERNMENT APIS")
 print("="*60)
+print("\n📊 MAXIMUM DATA COLLECTION MODE ENABLED")
+print("   • arXiv: 2,000 articles per query")
+print("   • DOAJ: 100 articles per query")
+print("   • Europe PMC: 1,000 articles per query")
+print("   • ERIC: 2,000 articles per query")
+print("   • NIH/PubMed: 500 articles per query")
+print("   • DOE OSTI: 1,000 articles per query")
+print("   • NASA STI: 1,000 articles per query")
+print(f"\n   Running {len(['arxiv', 'doaj', 'europe_pmc', 'eric', 'nih', 'doe', 'nasa'])} APIs × 6 queries = 42 API calls")
+print("   ⏱️ Estimated time: 3-5 minutes\n")
 
 api_hub = FreeAcademicAPIs()
 
@@ -247,31 +266,31 @@ queries = [
 
 all_results = []
 
-for query in queries:
-    print(f"\n🔍 Search query: {query}")
+for idx, query in enumerate(queries, 1):
+    print(f"\n🔍 Search query {idx}/{len(queries)}: {query}")
     print("-"*60)
 
-    # Search each API
-    all_results.extend(api_hub.search_arxiv(query, max_results=100))
-    time.sleep(1)
+    # Search each API with MAXIMUM results
+    all_results.extend(api_hub.search_arxiv(query, max_results=2000))
+    time.sleep(2)
 
     all_results.extend(api_hub.search_doaj(query, max_results=100))
-    time.sleep(1)
+    time.sleep(2)
 
-    all_results.extend(api_hub.search_europe_pmc(query, max_results=100))
-    time.sleep(1)
+    all_results.extend(api_hub.search_europe_pmc(query, max_results=1000))
+    time.sleep(2)
 
-    all_results.extend(api_hub.search_eric(query, max_results=100))
-    time.sleep(1)
+    all_results.extend(api_hub.search_eric(query, max_results=2000))
+    time.sleep(2)
 
-    all_results.extend(api_hub.search_nih(query, max_results=100))
-    time.sleep(1)
+    all_results.extend(api_hub.search_nih(query, max_results=500))
+    time.sleep(2)
 
-    all_results.extend(api_hub.search_doe(query, max_results=50))
-    time.sleep(1)
+    all_results.extend(api_hub.search_doe(query, max_results=1000))
+    time.sleep(2)
 
-    all_results.extend(api_hub.search_nasa(query, max_results=50))
-    time.sleep(1)
+    all_results.extend(api_hub.search_nasa(query, max_results=1000))
+    time.sleep(2)
 
 print(f"\n📊 Total articles collected: {len(all_results)}")
 
