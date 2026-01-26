@@ -36,6 +36,11 @@ YOUR_EMAIL = "justinjacques@humantheorygroup.com"
 # - NIH/PubMed: 500 (recommended max)
 # - DOE OSTI: 1,000
 # - NASA STI: 1,000
+# - Crossref: 1,000
+# - ClinicalTrials.gov: 1,000
+# - OSF Preprints: 100 (per request limit)
+# - SciELO: 1,000
+# - CORE: 100
 
 cultural_terms = ["cultural humility", "cultural competence", "cultural awareness"]
 discipline_terms = ["nursing", "medicine", "public health", "counseling", "psychology", "social work", "therapy"]
@@ -57,12 +62,16 @@ class FreeAcademicAPIs:
         self.base_urls = {
             'arxiv': 'http://export.arxiv.org/api/query',
             'doaj': 'https://doaj.org/api/v1/search/articles/',
-            'core': 'https://core.ac.uk/api/v2/search/articles/',
+            'core': 'https://core.ac.uk:443/api-v2/search/works',
             'europe_pmc': 'https://www.ebi.ac.uk/europepmc/webservices/rest/search/',
             'eric': 'https://api.ies.ed.gov/eric/',
             'nih': 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/',
             'doe': 'https://www.osti.gov/api/v1/records/',
-            'nasa': 'https://ntrs.nasa.gov/api/citations/search'
+            'nasa': 'https://ntrs.nasa.gov/api/citations/search',
+            'crossref': 'https://api.crossref.org/works',
+            'clinical_trials': 'https://clinicaltrials.gov/api/v2/studies',
+            'osf_preprints': 'https://api.osf.io/v2/preprints/',
+            'scielo': 'https://search.scielo.org/api/v1/search'
         }
 
     def search_arxiv(self, query: str, max_results: int = 2000) -> list:
@@ -236,6 +245,169 @@ class FreeAcademicAPIs:
             print(f"    ⚠️ NASA STI error: {e}")
             return []
 
+    def search_crossref(self, query: str, max_results: int = 1000) -> list:
+        """Search Crossref - Massive multi-disciplinary database (MAX: 1000)"""
+        print(f"  📚 Searching Crossref (requesting up to {max_results})...")
+        try:
+            params = {
+                'query': query,
+                'rows': max_results,
+                'filter': 'from-pub-date:2015,until-pub-date:2025'
+            }
+            response = requests.get(self.base_urls['crossref'], params=params, timeout=30)
+            data = response.json()
+            papers = []
+            for item in data.get('message', {}).get('items', []):
+                # Extract year from published date
+                year = None
+                if 'published' in item and 'date-parts' in item['published']:
+                    date_parts = item['published']['date-parts'][0]
+                    if date_parts:
+                        year = int(date_parts[0])
+
+                # Get abstract
+                abstract = item.get('abstract', '')
+
+                papers.append({
+                    "Title": item.get('title', ['No title'])[0] if item.get('title') else 'No title',
+                    "Published": year,
+                    "Abstract": abstract,
+                    "Source": "Crossref"
+                })
+            print(f"    ✅ Found {len(papers)} articles")
+            return papers
+        except Exception as e:
+            print(f"    ⚠️ Crossref error: {e}")
+            return []
+
+    def search_clinical_trials(self, query: str, max_results: int = 1000) -> list:
+        """Search ClinicalTrials.gov - Medical & nursing clinical trials (MAX: 1000)"""
+        print(f"  📚 Searching ClinicalTrials.gov (requesting up to {max_results})...")
+        try:
+            params = {
+                'query.term': query,
+                'pageSize': max_results,
+                'format': 'json'
+            }
+            response = requests.get(self.base_urls['clinical_trials'], params=params, timeout=30)
+            data = response.json()
+            papers = []
+            for study in data.get('studies', []):
+                protocol = study.get('protocolSection', {})
+                identification = protocol.get('identificationModule', {})
+                description = protocol.get('descriptionModule', {})
+                status = protocol.get('statusModule', {})
+
+                # Extract year from start date
+                year = None
+                if 'startDateStruct' in status:
+                    year = status['startDateStruct'].get('year')
+
+                papers.append({
+                    "Title": identification.get('officialTitle', identification.get('briefTitle', 'No title')),
+                    "Published": int(year) if year else None,
+                    "Abstract": description.get('briefSummary', description.get('detailedDescription', '')),
+                    "Source": "ClinicalTrials.gov"
+                })
+            print(f"    ✅ Found {len(papers)} articles")
+            return papers
+        except Exception as e:
+            print(f"    ⚠️ ClinicalTrials.gov error: {e}")
+            return []
+
+    def search_osf_preprints(self, query: str, max_results: int = 100) -> list:
+        """Search OSF Preprints (PsyArXiv & SocArXiv) - Psychology & Social Sciences (MAX: 100)"""
+        print(f"  📚 Searching OSF Preprints (PsyArXiv/SocArXiv) (requesting up to {max_results})...")
+        try:
+            params = {
+                'filter[subjects]': query,
+                'page[size]': max_results
+            }
+            response = requests.get(self.base_urls['osf_preprints'], params=params, timeout=30)
+            data = response.json()
+            papers = []
+            for item in data.get('data', []):
+                attrs = item.get('attributes', {})
+
+                # Extract year from date_published or date_created
+                year = None
+                date_str = attrs.get('date_published') or attrs.get('date_created', '')
+                if date_str:
+                    year = int(date_str[:4])
+
+                papers.append({
+                    "Title": attrs.get('title', 'No title'),
+                    "Published": year,
+                    "Abstract": attrs.get('description', ''),
+                    "Source": "OSF Preprints"
+                })
+            print(f"    ✅ Found {len(papers)} articles")
+            return papers
+        except Exception as e:
+            print(f"    ⚠️ OSF Preprints error: {e}")
+            return []
+
+    def search_scielo(self, query: str, max_results: int = 1000) -> list:
+        """Search SciELO - Social Sciences & Regional Health (MAX: 1000)"""
+        print(f"  📚 Searching SciELO (requesting up to {max_results})...")
+        try:
+            params = {
+                'q': query,
+                'count': max_results,
+                'output': 'json'
+            }
+            response = requests.get(self.base_urls['scielo'], params=params, timeout=30)
+            data = response.json()
+            papers = []
+            for item in data.get('response', {}).get('docs', []):
+                # Extract year from publication date
+                year = None
+                pub_date = item.get('publication_date', '')
+                if pub_date:
+                    year = int(pub_date[:4])
+
+                papers.append({
+                    "Title": item.get('title', 'No title'),
+                    "Published": year,
+                    "Abstract": item.get('abstract', ''),
+                    "Source": "SciELO"
+                })
+            print(f"    ✅ Found {len(papers)} articles")
+            return papers
+        except Exception as e:
+            print(f"    ⚠️ SciELO error: {e}")
+            return []
+
+    def search_core(self, query: str, max_results: int = 100) -> list:
+        """Search CORE - Open access research papers (MAX: 100)"""
+        print(f"  📚 Searching CORE (requesting up to {max_results})...")
+        try:
+            params = {
+                'q': query,
+                'limit': max_results
+            }
+            response = requests.get(self.base_urls['core'], params=params, timeout=30)
+            data = response.json()
+            papers = []
+            for item in data.get('results', []):
+                # Extract year
+                year = None
+                year_published = item.get('yearPublished')
+                if year_published:
+                    year = int(year_published)
+
+                papers.append({
+                    "Title": item.get('title', 'No title'),
+                    "Published": year,
+                    "Abstract": item.get('abstract', item.get('description', '')),
+                    "Source": "CORE"
+                })
+            print(f"    ✅ Found {len(papers)} articles")
+            return papers
+        except Exception as e:
+            print(f"    ⚠️ CORE error: {e}")
+            return []
+
 # ----------------------------
 # 5. FETCH FROM ALL FREE APIS
 # ----------------------------
@@ -249,8 +421,13 @@ print("   • ERIC: 2,000 articles per query")
 print("   • NIH/PubMed: 500 articles per query")
 print("   • DOE OSTI: 1,000 articles per query")
 print("   • NASA STI: 1,000 articles per query")
-print(f"\n   Running {len(['arxiv', 'doaj', 'europe_pmc', 'eric', 'nih', 'doe', 'nasa'])} APIs × 6 queries = 42 API calls")
-print("   ⏱️ Estimated time: 3-5 minutes\n")
+print("   • Crossref: 1,000 articles per query")
+print("   • ClinicalTrials.gov: 1,000 articles per query")
+print("   • OSF Preprints: 100 articles per query")
+print("   • SciELO: 1,000 articles per query")
+print("   • CORE: 100 articles per query")
+print(f"\n   Running 12 APIs × 6 queries = 72 API calls")
+print("   ⏱️ Estimated time: 5-8 minutes\n")
 
 api_hub = FreeAcademicAPIs()
 
@@ -290,6 +467,21 @@ for idx, query in enumerate(queries, 1):
     time.sleep(2)
 
     all_results.extend(api_hub.search_nasa(query, max_results=1000))
+    time.sleep(2)
+
+    all_results.extend(api_hub.search_crossref(query, max_results=1000))
+    time.sleep(2)
+
+    all_results.extend(api_hub.search_clinical_trials(query, max_results=1000))
+    time.sleep(2)
+
+    all_results.extend(api_hub.search_osf_preprints(query, max_results=100))
+    time.sleep(2)
+
+    all_results.extend(api_hub.search_scielo(query, max_results=1000))
+    time.sleep(2)
+
+    all_results.extend(api_hub.search_core(query, max_results=100))
     time.sleep(2)
 
 print(f"\n📊 Total articles collected: {len(all_results)}")
