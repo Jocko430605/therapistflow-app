@@ -5,7 +5,7 @@
 # ----------------------------
 # 1. INSTALL PACKAGES
 # ----------------------------
-!pip install pandas matplotlib seaborn requests lxml openpyxl -q
+!pip install pandas matplotlib seaborn requests lxml openpyxl beautifulsoup4 -q
 
 # ----------------------------
 # 2. IMPORTS
@@ -22,6 +22,7 @@ warnings.filterwarnings("ignore")
 import requests
 from xml.etree import ElementTree as ET
 from google.colab import files
+from bs4 import BeautifulSoup
 
 # ----------------------------
 # 3. CONFIGURATION
@@ -51,6 +52,18 @@ def group_discipline(discipline):
     if discipline.lower() in ["counseling", "psychology", "social work", "therapy"]:
         return "Counseling & Related"
     return discipline.title()
+
+def clean_jats_xml(text):
+    """Remove JATS XML tags from abstracts"""
+    if not text:
+        return ""
+    try:
+        # Use BeautifulSoup to strip all XML/HTML tags
+        soup = BeautifulSoup(text, 'html.parser')
+        return soup.get_text(separator=' ', strip=True)
+    except:
+        # Fallback: simple regex to remove tags
+        return re.sub(r'<[^>]+>', '', text)
 
 # ----------------------------
 # 4. FREE ACADEMIC & GOVERNMENT APIS
@@ -91,7 +104,10 @@ class FreeAcademicAPIs:
                         "Title": title.text.strip() if title.text else "No title",
                         "Published": int(published.text[:4]) if published is not None else None,
                         "Abstract": summary.text.strip() if summary is not None else "",
-                        "Source": "arXiv"
+                        "Source": "arXiv",
+                        "Journal": "N/A",
+                        "Citation_Info": "N/A",
+                        "ISSN": "N/A"
                     })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -113,7 +129,10 @@ class FreeAcademicAPIs:
                     "Title": bibjson.get('title', 'No title'),
                     "Published": int(bibjson.get('year')) if bibjson.get('year') else None,
                     "Abstract": bibjson.get('abstract', ''),
-                    "Source": "DOAJ"
+                    "Source": "DOAJ",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -139,7 +158,10 @@ class FreeAcademicAPIs:
                     "Title": article.get('title', 'No title'),
                     "Published": int(article.get('pubYear')) if article.get('pubYear') else None,
                     "Abstract": article.get('abstractText', ''),
-                    "Source": "Europe PMC"
+                    "Source": "Europe PMC",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -160,7 +182,10 @@ class FreeAcademicAPIs:
                     "Title": article.get('title', 'No title'),
                     "Published": int(article.get('publicationyear', '0')[:4]) if article.get('publicationyear') else None,
                     "Abstract": article.get('abstract', ''),
-                    "Source": "ERIC"
+                    "Source": "ERIC",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -195,7 +220,10 @@ class FreeAcademicAPIs:
                     "Title": title_elem.text if title_elem is not None else "No title",
                     "Published": int(year_elem.text) if year_elem is not None and year_elem.text.isdigit() else None,
                     "Abstract": abstract_elem.text if abstract_elem is not None else "",
-                    "Source": "NIH/PubMed"
+                    "Source": "NIH/PubMed",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -216,7 +244,10 @@ class FreeAcademicAPIs:
                     "Title": record.get('title', 'No title'),
                     "Published": int(record.get('publication_date', '')[:4]) if record.get('publication_date') else None,
                     "Abstract": record.get('description', ''),
-                    "Source": "DOE OSTI"
+                    "Source": "DOE OSTI",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -237,7 +268,10 @@ class FreeAcademicAPIs:
                     "Title": doc.get('title', 'No title'),
                     "Published": int(doc.get('created', '')[:4]) if doc.get('created') else None,
                     "Abstract": doc.get('abstract', ''),
-                    "Source": "NASA STI"
+                    "Source": "NASA STI",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -265,14 +299,36 @@ class FreeAcademicAPIs:
                     if date_parts:
                         year = int(date_parts[0])
 
-                # Get abstract
-                abstract = item.get('abstract', '')
+                # Extract journal metadata
+                journal_title = item.get('container-title', ['Unknown Journal'])[0] if item.get('container-title') else 'Unknown Journal'
+                volume = item.get('volume', '')
+                issue = item.get('issue', '')
+                pages = item.get('page', '')
+                issn_list = item.get('ISSN', [])
+                issn = issn_list[0] if issn_list else ''
+
+                # Build citation info
+                citation_parts = []
+                if volume:
+                    citation_parts.append(f"Vol {volume}")
+                if issue:
+                    citation_parts.append(f"Issue {issue}")
+                if pages:
+                    citation_parts.append(f"pp. {pages}")
+                citation_info = ', '.join(citation_parts) if citation_parts else 'N/A'
+
+                # Get and clean abstract (remove JATS XML tags)
+                raw_abstract = item.get('abstract', '')
+                clean_abstract = clean_jats_xml(raw_abstract)
 
                 papers.append({
                     "Title": item.get('title', ['No title'])[0] if item.get('title') else 'No title',
                     "Published": year,
-                    "Abstract": abstract,
-                    "Source": "Crossref"
+                    "Abstract": clean_abstract,
+                    "Source": "Crossref",
+                    "Journal": journal_title,
+                    "Citation_Info": citation_info,
+                    "ISSN": issn
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -307,7 +363,10 @@ class FreeAcademicAPIs:
                     "Title": identification.get('officialTitle', identification.get('briefTitle', 'No title')),
                     "Published": int(year) if year else None,
                     "Abstract": description.get('briefSummary', description.get('detailedDescription', '')),
-                    "Source": "ClinicalTrials.gov"
+                    "Source": "ClinicalTrials.gov",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -339,7 +398,10 @@ class FreeAcademicAPIs:
                     "Title": attrs.get('title', 'No title'),
                     "Published": year,
                     "Abstract": attrs.get('description', ''),
-                    "Source": "OSF Preprints"
+                    "Source": "OSF Preprints",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -370,7 +432,10 @@ class FreeAcademicAPIs:
                     "Title": item.get('title', 'No title'),
                     "Published": year,
                     "Abstract": item.get('abstract', ''),
-                    "Source": "SciELO"
+                    "Source": "SciELO",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -400,7 +465,10 @@ class FreeAcademicAPIs:
                     "Title": item.get('title', 'No title'),
                     "Published": year,
                     "Abstract": item.get('abstract', item.get('description', '')),
-                    "Source": "CORE"
+                    "Source": "CORE",
+                    "Journal": "N/A",
+                    "Citation_Info": "N/A",
+                    "ISSN": "N/A"
                 })
             print(f"    ✅ Found {len(papers)} articles")
             return papers
@@ -667,7 +735,16 @@ excel_filename = "cultural_humility_analysis_results.xlsx"
 
 with pd.ExcelWriter(excel_filename, engine='openpyxl') as writer:
     # Sheet 1: Main dataset with all articles
-    final_df[['Title', 'Published', 'Abstract', 'Source']].to_excel(
+    # Define columns to export (include new Crossref fields if they exist)
+    export_columns = ['Title', 'Published', 'Abstract', 'Source']
+    if 'Journal' in final_df.columns:
+        export_columns.append('Journal')
+    if 'Citation_Info' in final_df.columns:
+        export_columns.append('Citation_Info')
+    if 'ISSN' in final_df.columns:
+        export_columns.append('ISSN')
+
+    final_df[export_columns].to_excel(
         writer,
         sheet_name='Articles',
         index=False
