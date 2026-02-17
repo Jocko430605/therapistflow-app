@@ -1,16 +1,21 @@
 # ============================================================
 # CULTURAL HUMILITY ANALYSIS — TRACK 2
-# Google Drive Excel → Bigram Analysis → Mann-Kendall → Line Graphs
+# Google Drive Excel → Bigram Analysis → Line Graphs
 #
-# KEY DESIGN:
-#   - Every article is classified into EXACTLY ONE primary term set
-#     (whichever of Humility / Competence / Awareness has the most
-#     mentions in that article's Title + Abstract).
-#   - The 3 per-discipline graphs therefore total = all articles.
-#   - The combined graph shows total MENTION counts (like Cass's graph).
-#   - NO discipline filter — all articles (including Other/Unknown) included.
+# DISCIPLINE CLASSIFICATION:
+#   Uses Column E (Journal name) + Column A (Title) + Column C (Abstract)
+#   to classify every article into one of the 4 disciplines.
+#   If Journal /Category already has a valid discipline, that is used first.
+#   All other values (journal names, Other, Unknown, blank) are resolved
+#   automatically via keyword matching.
 #
-# OUTPUT (5 files downloaded individually):
+# GRAPH LOGIC:
+#   Graph 1 (combined): Total MENTION counts, all disciplines — unchanged.
+#   Graphs 2–4 (per term set): ARTICLE counts by discipline.
+#     Each article is assigned to exactly ONE term set (most mentions wins).
+#     The 3 graphs together = all articles in the dataset.
+#
+# OUTPUT — 5 files downloaded individually:
 #   1. mann_kendall_results.xlsx
 #   2. trend_graph_combined_all_disciplines.png
 #   3. trend_graph_cultural_humility.png
@@ -18,11 +23,9 @@
 #   5. trend_graph_cultural_awareness.png
 # ============================================================
 
-# ── STEP 0: Mount Google Drive ───────────────────────────────
 from google.colab import drive
 drive.mount('/content/drive')
 
-# ── IMPORTS ──────────────────────────────────────────────────
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -37,25 +40,92 @@ FILE_PATH = (
     'cultural_humility_analysis_results 2.17.2026.JGJ.Human.in.loop.xlsx'
 )
 SHEET_NAME      = 'Articles'
-CATEGORY_COLUMN = 'Journal /Category'   # no space after the slash
+CATEGORY_COLUMN = 'Journal /Category'  # may contain journal names, Other, Unknown
+JOURNAL_COLUMN  = 'Journal'            # Column E — actual journal name
 YEAR_COLUMN     = 'Published'
-TEXT_COLUMNS    = ['Title', 'Abstract']
+TEXT_COLUMNS    = ['Title', 'Abstract']   # Columns A and C
 
 YEAR_START = 2015
 YEAR_END   = 2025
 year_range = list(range(YEAR_START, YEAR_END + 1))
 
-SEP = "=" * 80
+# The only 4 valid discipline labels we want on graphs
+VALID_DISCIPLINES = ['Nursing', 'Counseling & Related', 'Public Health', 'Medicine']
+
+# ── DISCIPLINE KEYWORD CLASSIFIER ────────────────────────────
+# Searches: Journal name (E) + Title (A) + Abstract (C)
+DISCIPLINE_KEYWORDS = {
+    'Nursing': [
+        'nursing', 'nurse ', 'nurses', 'midwifery', 'midwife',
+        'nurse practitioner', 'nurse educator', 'nursing education',
+        'nursing practice', 'nursing research', 'nursing care',
+        'clinical nursing', 'neonatal', 'registered nurse',
+    ],
+    'Counseling & Related': [
+        'counseling', 'counselling', 'counselor', 'counsellor',
+        'psychology', 'psychological', 'psychotherapy', 'psychotherapist',
+        'social work', 'social worker', 'mental health counseling',
+        'marriage and family', 'family therapy', 'family therapist',
+        'school counseling', 'rehabilitation counseling',
+        'multicultural counseling', 'substance abuse counseling',
+        'behavioral health', 'child welfare', 'case management',
+    ],
+    'Public Health': [
+        'public health', 'community health', 'epidemiology', 'epidemiolog',
+        'preventive medicine', 'health promotion', 'global health',
+        'population health', 'health education', 'health equity',
+        'health disparit', 'environmental health', 'occupational health',
+        'maternal health', 'child health', 'health policy',
+    ],
+    'Medicine': [
+        'medicine', 'medical school', 'medical education', 'physician',
+        'academic medicine', 'clinical medicine', 'medical training',
+        'surgery', 'surgical', 'pediatrics', 'geriatrics',
+        'oncology', 'cardiology', 'hospital medicine',
+        'medical student', 'medical resident',
+    ],
+}
+# Tie-breaking priority (largest known groups first)
+DISC_PRIORITY = ['Nursing', 'Counseling & Related', 'Public Health', 'Medicine']
+
+def _infer_discipline_from_text(row):
+    """Score each discipline by keyword hits in Journal + Title + Abstract."""
+    text = ' '.join([
+        str(row.get(JOURNAL_COLUMN, '') or ''),
+        str(row.get('Title',         '') or ''),
+        str(row.get('Abstract',      '') or ''),
+    ]).lower()
+
+    scores = {d: 0 for d in VALID_DISCIPLINES}
+    for disc, keywords in DISCIPLINE_KEYWORDS.items():
+        for kw in keywords:
+            scores[disc] += text.count(kw)
+
+    max_score = max(scores.values())
+    if max_score == 0:
+        return None   # no keyword match
+    for d in DISC_PRIORITY:    # break ties by priority
+        if scores[d] == max_score:
+            return d
+
+def resolve_discipline(row):
+    """
+    1. Use Journal /Category if it already holds a valid discipline.
+    2. Otherwise infer from keyword matching (Journal + Title + Abstract).
+    3. Fall back to 'Counseling & Related' if completely unresolvable.
+    """
+    existing = str(row[CATEGORY_COLUMN]).strip() if pd.notna(row[CATEGORY_COLUMN]) else ''
+    if existing in VALID_DISCIPLINES:
+        return existing
+    inferred = _infer_discipline_from_text(row)
+    return inferred or 'Counseling & Related'
 
 # ── BIGRAM SETS ───────────────────────────────────────────────
-# Longest phrase first within each set (deduplication)
 BIGRAM_SETS = {
     'Humility Set':   ['cultural humility',   'culturally humble'],
     'Competence Set': ['cultural competence', 'cultural competency', 'culturally competent'],
     'Awareness Set':  ['cultural awareness',  'culturally aware'],
 }
-
-# Priority when an article ties across sets (or has no mentions)
 SET_PRIORITY = ['Competence Set', 'Humility Set', 'Awareness Set']
 
 # ── COLORS ───────────────────────────────────────────────────
@@ -64,66 +134,106 @@ DISCIPLINE_COLORS = {
     'Counseling & Related': '#457B9D',
     'Medicine':             '#1D3557',
     'Public Health':        '#2A9D8F',
-    'Other':                '#888888',
-    'Unknown':              '#BBBBBB',
 }
-
 TERM_SET_COLORS = {
-    'Humility Set':   '#1f77b4',   # blue
-    'Competence Set': '#c94b7d',   # pink  (matches Cass's graph)
-    'Awareness Set':  '#ff7f0e',   # orange
+    'Humility Set':   '#1f77b4',
+    'Competence Set': '#c94b7d',
+    'Awareness Set':  '#ff7f0e',
 }
 
 # ============================================================
-# STEP 1 — LOAD ALL DATA  (no discipline filter)
+# STEP 1 — LOAD DATA + CLASSIFY DISCIPLINES
 # ============================================================
-print(SEP)
-print("LOADING DATA")
-print(SEP)
-
+print("Loading data...")
 df = pd.read_excel(FILE_PATH, sheet_name=SHEET_NAME)
 
 df['Year'] = pd.to_numeric(df[YEAR_COLUMN].astype(str).str[:4], errors='coerce')
 df = df[df['Year'].between(YEAR_START, YEAR_END)].copy()
 df['Year'] = df['Year'].astype(int)
+print(f"  ✓ {len(df)} articles  ({YEAR_START}–{YEAR_END})")
 
-print(f"✓ Loaded {len(df)} articles")
-print(f"✓ Year range: {YEAR_START} - {YEAR_END}")
-print(f"\n  Discipline distribution:")
-for disc, count in df[CATEGORY_COLUMN].value_counts().items():
-    print(f"  {disc}: {count}")
+df['Discipline'] = df.apply(resolve_discipline, axis=1)
+print(f"\n  Discipline breakdown after classification:")
+for d in VALID_DISCIPLINES:
+    n = int((df['Discipline'] == d).sum())
+    print(f"    {d}: {n}")
+print(f"    TOTAL: {len(df)}")
 
-# Ordered discipline list (keeps known disciplines in a sensible order)
-_known_order = ['Nursing', 'Counseling & Related', 'Other', 'Unknown',
-                'Public Health', 'Medicine']
-all_disciplines = sorted(
-    df[CATEGORY_COLUMN].dropna().unique().tolist(),
-    key=lambda x: (_known_order.index(x) if x in _known_order else 99, x)
-)
+# ============================================================
+# STEP 2 — COUNT BIGRAMS + CLASSIFY INTO TERM SETS
+# ============================================================
+print("\nCounting bigrams...")
 
-# Build combined text for bigram searching
 df['combined_text'] = (
-    df[TEXT_COLUMNS]
-    .fillna('')
-    .agg(' '.join, axis=1)
-    .str.lower()
+    df[TEXT_COLUMNS].fillna('').agg(' '.join, axis=1).str.lower()
 )
 
-# ============================================================
-# HELPERS
-# ============================================================
 def count_bigram_set(text, phrases):
-    """Count total mentions of a set of phrases (longest-match-first)."""
     phrases_sorted = sorted(phrases, key=len, reverse=True)
-    working = text
-    total = 0
+    working, total = text, 0
     for phrase in phrases_sorted:
         total  += working.count(phrase)
         working = working.replace(phrase, ' ')
     return total
 
+for set_name, phrases in BIGRAM_SETS.items():
+    df[set_name] = df['combined_text'].apply(
+        lambda t: count_bigram_set(t, phrases)
+    )
+
+# Assign each article to the term set with the most mentions
+def classify_primary_set(row):
+    counts    = {s: row[s] for s in BIGRAM_SETS}
+    max_count = max(counts.values())
+    for s in SET_PRIORITY:          # break ties / zeros by priority
+        if counts[s] == max_count:
+            return s
+
+df['Primary Set'] = df.apply(classify_primary_set, axis=1)
+print(f"  Primary term set assignment:")
+for s in BIGRAM_SETS:
+    print(f"    {s}: {int((df['Primary Set'] == s).sum())} articles")
+print(f"    TOTAL: {len(df)} articles")
+
+# ============================================================
+# STEP 3 — AGGREGATE BY YEAR × DISCIPLINE
+# ============================================================
+mention_pivot = {}   # for combined graph (mention counts)
+combined_ment = {}
+article_pivot = {}   # for per-discipline graphs (article counts)
+
+for set_name in BIGRAM_SETS:
+    # ── mention counts (all articles) ────────────────────────
+    m_df = df[['Year', 'Discipline', set_name]].copy()
+    m_df.columns = ['Year', 'Discipline', 'Mentions']
+    m_grp = m_df.groupby(['Year', 'Discipline'])['Mentions'].sum().reset_index()
+    m_piv = (
+        m_grp
+        .pivot_table(index='Year', columns='Discipline',
+                     values='Mentions', fill_value=0)
+        .reindex(index=year_range, fill_value=0)
+        .reindex(columns=VALID_DISCIPLINES, fill_value=0)
+    )
+    mention_pivot[set_name] = m_piv
+    combined_ment[set_name] = m_piv.sum(axis=1)
+
+    # ── article counts (primary-set articles only) ────────────
+    a_df = df[df['Primary Set'] == set_name][['Year', 'Discipline']].copy()
+    a_df['Count'] = 1
+    a_grp = a_df.groupby(['Year', 'Discipline'])['Count'].sum().reset_index()
+    a_piv = (
+        a_grp
+        .pivot_table(index='Year', columns='Discipline',
+                     values='Count', fill_value=0)
+        .reindex(index=year_range, fill_value=0)
+        .reindex(columns=VALID_DISCIPLINES, fill_value=0)
+    )
+    article_pivot[set_name] = a_piv
+
+# ============================================================
+# STEP 4 — STATISTICS (Mann-Kendall + Theil-Sen → Excel only)
+# ============================================================
 def mann_kendall_test(x):
-    """Non-parametric Mann-Kendall test. Returns (tau, p_value, trend)."""
     n = len(x)
     if n < 3:
         return np.nan, np.nan, 'insufficient data'
@@ -134,29 +244,68 @@ def mann_kendall_test(x):
             if diff > 0:   s += 1
             elif diff < 0: s -= 1
     var_s = n * (n - 1) * (2 * n + 5) / 18
-    if s > 0:   z = (s - 1) / np.sqrt(var_s)
-    elif s < 0: z = (s + 1) / np.sqrt(var_s)
-    else:       z = 0.0
+    z = (s - np.sign(s)) / np.sqrt(var_s) if s != 0 else 0.0
     p_value = 2 * (1 - norm.cdf(abs(z)))
-    tau = s / (0.5 * n * (n - 1))
+    tau   = s / (0.5 * n * (n - 1))
     trend = ('increasing' if s > 0 else 'decreasing') if p_value < 0.05 else 'no significant trend'
     return tau, p_value, trend
-
-def fmt_trend(trend):
-    if trend == 'increasing': return 'INCREASING **'
-    if trend == 'decreasing': return 'DECREASING **'
-    return '→ NO TREND'
 
 def get_slope(series):
     if len(series) >= 2 and np.std(series) > 0:
         return theilslopes(series, year_range).slope
     return 0.0
 
-def get_color(discipline, idx=0):
-    if discipline in DISCIPLINE_COLORS:
-        return DISCIPLINE_COLORS[discipline]
-    return plt.cm.tab10.colors[idx % 10]
+rows = []
+for set_name in BIGRAM_SETS:
+    # Overall (all disciplines combined, mention counts)
+    s_all = combined_ment[set_name].values
+    tau, p, trend = mann_kendall_test(s_all)
+    rows.append({'Term Set': set_name, 'Discipline': 'ALL (Combined)',
+                 'Metric': 'Mentions', 'Total': int(s_all.sum()),
+                 'Trend': trend,
+                 'Theil-Sen Slope': round(get_slope(s_all), 4),
+                 'p-value': round(p, 4)   if not np.isnan(p)   else 'N/A',
+                 'Tau':     round(tau, 4) if not np.isnan(tau) else 'N/A'})
+    # Per discipline (mention counts)
+    for d in VALID_DISCIPLINES:
+        s_d = mention_pivot[set_name][d].values
+        tau, p, trend = mann_kendall_test(s_d)
+        rows.append({'Term Set': set_name, 'Discipline': d,
+                     'Metric': 'Mentions', 'Total': int(s_d.sum()),
+                     'Trend': trend,
+                     'Theil-Sen Slope': round(get_slope(s_d), 4),
+                     'p-value': round(p, 4)   if not np.isnan(p)   else 'N/A',
+                     'Tau':     round(tau, 4) if not np.isnan(tau) else 'N/A'})
+    # Per discipline (article counts)
+    for d in VALID_DISCIPLINES:
+        s_a = article_pivot[set_name][d].values
+        tau, p, trend = mann_kendall_test(s_a)
+        rows.append({'Term Set': set_name, 'Discipline': d,
+                     'Metric': 'Articles', 'Total': int(s_a.sum()),
+                     'Trend': trend,
+                     'Theil-Sen Slope': round(get_slope(s_a), 4),
+                     'p-value': round(p, 4)   if not np.isnan(p)   else 'N/A',
+                     'Tau':     round(tau, 4) if not np.isnan(tau) else 'N/A'})
 
+stats_df   = pd.DataFrame(rows)
+stats_file = 'mann_kendall_results.xlsx'
+with pd.ExcelWriter(stats_file, engine='openpyxl') as writer:
+    stats_df[stats_df['Discipline'] == 'ALL (Combined)'].drop(columns='Discipline').to_excel(
+        writer, sheet_name='Overall Trends', index=False)
+    stats_df[
+        (stats_df['Discipline'] != 'ALL (Combined)') &
+        (stats_df['Metric'] == 'Mentions')
+    ].to_excel(writer, sheet_name='By Discipline (Mentions)', index=False)
+    stats_df[
+        (stats_df['Discipline'] != 'ALL (Combined)') &
+        (stats_df['Metric'] == 'Articles')
+    ].to_excel(writer, sheet_name='By Discipline (Articles)', index=False)
+    stats_df.to_excel(writer, sheet_name='All Stats', index=False)
+print(f"\n  ✓ Stats saved to {stats_file}")
+
+# ============================================================
+# HELPER — data-point labels
+# ============================================================
 def add_data_labels(ax, x_vals, y_vals, color, fontsize=8.5):
     for x, y in zip(x_vals, y_vals):
         if y > 0:
@@ -168,203 +317,11 @@ def add_data_labels(ax, x_vals, y_vals, color, fontsize=8.5):
             )
 
 # ============================================================
-# STEP 2 — COUNT BIGRAMS (per article, per phrase and per set)
+# GRAPH 1 — COMBINED: all 3 term sets, all disciplines
+#           Uses MENTION counts — matches Cass's graph exactly.
+#           User confirmed: "The first graph is perfect."
 # ============================================================
-print(f"\n{SEP}")
-print("COUNTING BIGRAMS")
-print(SEP)
-
-# Per-phrase counts (printed like Cass's output)
-print("\n✓ Bigram counts per article:")
-for set_name, phrases in BIGRAM_SETS.items():
-    for phrase in phrases:
-        total    = int(df['combined_text'].str.count(phrase).sum())
-        n_arts   = int((df['combined_text'].str.contains(phrase)).sum())
-        print(f"  {phrase.title()}: {total:4d} mentions across {n_arts:4d} articles")
-
-# Per-set counts (used for analysis)
-for set_name, phrases in BIGRAM_SETS.items():
-    df[set_name] = df['combined_text'].apply(
-        lambda t: count_bigram_set(t, phrases)
-    )
-
-# ── Classify each article into its PRIMARY term set ──────────
-# Rule: whichever set has the most mentions.
-# Ties broken by SET_PRIORITY order.
-# Articles with zero mentions in all sets → default to first in SET_PRIORITY.
-def classify_article(row):
-    counts = {s: row[s] for s in BIGRAM_SETS}
-    max_count = max(counts.values())
-    for s in SET_PRIORITY:               # priority for ties / zero
-        if counts[s] == max_count:
-            return s
-
-df['Primary Set'] = df.apply(classify_article, axis=1)
-
-print(f"\n✓ Primary term set classification:")
-for s in BIGRAM_SETS:
-    n = int((df['Primary Set'] == s).sum())
-    print(f"  {s}: {n} articles")
-print(f"  TOTAL: {len(df)} articles")
-
-# ============================================================
-# STEP 3 — AGGREGATE BY YEAR × DISCIPLINE
-# ============================================================
-print(f"\n{SEP}")
-print("AGGREGATING BY YEAR × DISCIPLINE")
-print(SEP)
-
-# mention-based pivot (for combined graph + overall stats)
-mention_pivot  = {}   # set_name → DataFrame(year × discipline, mentions)
-combined_ment  = {}   # set_name → Series(year, total mentions all disciplines)
-
-# article-based pivot (for per-discipline graphs — totals = all articles)
-article_pivot  = {}   # set_name → DataFrame(year × discipline, article count)
-combined_art   = {}   # set_name → Series(year, total articles all disciplines)
-
-for set_name in BIGRAM_SETS:
-    # ── mentions ─────────────────────────────────────────────
-    m_df = df[['Year', CATEGORY_COLUMN, set_name]].copy()
-    m_df.columns = ['Year', 'Discipline', 'Mentions']
-    m_grouped = m_df.groupby(['Year', 'Discipline'])['Mentions'].sum().reset_index()
-    m_pivot = (
-        m_grouped
-        .pivot_table(index='Year', columns='Discipline',
-                     values='Mentions', fill_value=0)
-        .reindex(index=year_range, fill_value=0)
-        .reindex(columns=all_disciplines, fill_value=0)
-    )
-    mention_pivot[set_name] = m_pivot
-    combined_ment[set_name] = m_pivot.sum(axis=1)
-
-    # ── article counts (primary-set articles only) ───────────
-    a_df = df[df['Primary Set'] == set_name][['Year', CATEGORY_COLUMN]].copy()
-    a_df = a_df.assign(Count=1)
-    a_grouped = a_df.groupby(['Year', CATEGORY_COLUMN])['Count'].sum().reset_index()
-    a_grouped.columns = ['Year', 'Discipline', 'Count']
-    a_pivot = (
-        a_grouped
-        .pivot_table(index='Year', columns='Discipline',
-                     values='Count', fill_value=0)
-        .reindex(index=year_range, fill_value=0)
-        .reindex(columns=all_disciplines, fill_value=0)
-    )
-    article_pivot[set_name] = a_pivot
-    combined_art[set_name]  = a_pivot.sum(axis=1)
-
-total_rows = sum(len(v) * len(v.columns) for v in mention_pivot.values())
-print(f"✓ Aggregation complete")
-print(f"✓ Total rows: {total_rows}")
-
-# ============================================================
-# STEP 4 — TREND ANALYSIS: OVERALL (all disciplines combined)
-#          Uses MENTION counts — consistent with Cass's analysis
-# ============================================================
-print(f"\n{SEP}")
-print("TREND ANALYSIS: OVERALL (All Disciplines Combined)")
-print(SEP)
-
-all_stats    = []
-overall_rows = []
-
-for set_name in BIGRAM_SETS:
-    series = combined_ment[set_name].values
-    tau, p_val, trend = mann_kendall_test(series)
-    slope = get_slope(series)
-
-    print(f"\n {set_name}:  {fmt_trend(trend)}")
-    print(f"   Slope: {slope:.3f} mentions/year")
-    if not np.isnan(p_val):
-        print(f"   p-value: {p_val:.4f}")
-    if not np.isnan(tau):
-        print(f"   Kendall's Tau (effect size): {tau:.3f}")
-
-    overall_rows.append({
-        'Cultural Term':   set_name,
-        'Trend':           trend,
-        'Theil-Sen Slope': round(slope, 3),
-        'Mann-Kendall p':  round(p_val, 4) if not np.isnan(p_val) else 'N/A',
-        "Kendall's Tau":   round(tau, 3)   if not np.isnan(tau)   else 'N/A',
-    })
-    all_stats.append({
-        'Term Set': set_name, 'Discipline': 'ALL (Combined)',
-        'Total Mentions': int(combined_ment[set_name].sum()),
-        'Total Articles': int(combined_art[set_name].sum()),
-        'Trend': trend, 'Theil-Sen Slope': round(slope, 4),
-        'p-value': round(p_val, 4) if not np.isnan(p_val) else 'N/A',
-        'Mann-Kendall Tau': round(tau, 4) if not np.isnan(tau) else 'N/A',
-    })
-
-print(f"\n{pd.DataFrame(overall_rows).to_string(index=False)}")
-
-# ============================================================
-# STEP 5 — TREND ANALYSIS: BY DISCIPLINE (each term set)
-#          Uses MENTION counts — consistent with Cass's analysis
-# ============================================================
-per_disc_stats = {}
-
-for set_name in BIGRAM_SETS:
-    print(f"\n{SEP}")
-    print(f"TREND ANALYSIS: BY DISCIPLINE ({set_name})")
-    print(SEP)
-
-    pivot     = mention_pivot[set_name]
-    a_pivot   = article_pivot[set_name]
-    disc_rows = []
-
-    for discipline in all_disciplines:
-        series = pivot[discipline].values
-        tau, p_val, trend = mann_kendall_test(series)
-        slope = get_slope(series)
-        total_ment = int(pivot[discipline].sum())
-        total_art  = int(a_pivot[discipline].sum())
-
-        print(f"\n {discipline}:  {fmt_trend(trend)}")
-        print(f"   Total mentions: {total_ment}")
-        print(f"   Growth rate: {slope:.3f} mentions/year")
-        if not np.isnan(p_val):
-            print(f"   p-value: {p_val:.4f}")
-
-        disc_rows.append({
-            'Discipline':  discipline,
-            'Total':       total_ment,
-            'Trend':       trend,
-            'p-value':     round(p_val, 4) if not np.isnan(p_val) else 'N/A',
-            'Slope/year':  round(slope, 3),
-        })
-        all_stats.append({
-            'Term Set': set_name, 'Discipline': discipline,
-            'Total Mentions': total_ment, 'Total Articles': total_art,
-            'Trend': trend, 'Theil-Sen Slope': round(slope, 4),
-            'p-value': round(p_val, 4) if not np.isnan(p_val) else 'N/A',
-            'Mann-Kendall Tau': round(tau, 4) if not np.isnan(tau) else 'N/A',
-        })
-
-    disc_df = pd.DataFrame(disc_rows)
-    print(f"\n{disc_df.to_string(index=False)}")
-    per_disc_stats[set_name] = disc_df
-
-# ============================================================
-# STEP 6 — SAVE STATISTICS TO EXCEL
-# ============================================================
-stats_file = 'mann_kendall_results.xlsx'
-with pd.ExcelWriter(stats_file, engine='openpyxl') as writer:
-    pd.DataFrame(overall_rows).to_excel(
-        writer, sheet_name='Overall Trends', index=False)
-    for set_name, disc_df in per_disc_stats.items():
-        disc_df.to_excel(
-            writer, sheet_name=set_name.replace(' ', '_')[:31], index=False)
-    pd.DataFrame(all_stats).to_excel(
-        writer, sheet_name='All Stats', index=False)
-print(f"\n✓ Saved {stats_file}")
-
-# ============================================================
-# GRAPH 1 — COMBINED: all 3 term sets, MENTION counts
-#           (replicates Cass's combined graph)
-# ============================================================
-print(f"\n{SEP}")
-print("DRAWING GRAPH 1 — Combined (all disciplines, mention counts)")
-print(SEP)
+print("\nDrawing graphs...")
 
 fig, ax = plt.subplots(figsize=(14, 8))
 for set_name in BIGRAM_SETS:
@@ -389,17 +346,13 @@ plt.tight_layout()
 combined_file = 'trend_graph_combined_all_disciplines.png'
 plt.savefig(combined_file, dpi=150, bbox_inches='tight')
 plt.show()
-print(f"✓ Saved {combined_file}")
+print(f"  ✓ {combined_file}")
 
 # ============================================================
-# GRAPHS 2–4 — PER TERM SET: ARTICLE COUNTS by discipline
-#   Y-axis = number of articles whose PRIMARY term set = this set
-#   All 3 graphs together sum to total articles in dataset
+# GRAPHS 2–4 — PER TERM SET: article counts by discipline
+#   - 4 discipline lines only (no journal names in legend)
+#   - All 3 graphs together = all articles
 # ============================================================
-print(f"\n{SEP}")
-print("DRAWING GRAPHS 2–4 — Per term set (article counts by discipline)")
-print(SEP)
-
 per_disc_files = [
     ('Humility Set',
      'Cultural Humility: Articles by Discipline (2015–2025)',
@@ -414,21 +367,17 @@ per_disc_files = [
 
 for set_name, title, filename in per_disc_files:
     pivot = article_pivot[set_name]
-    n_articles = int(pivot.values.sum())
-
     fig, ax = plt.subplots(figsize=(13, 7))
 
-    for i, discipline in enumerate(all_disciplines):
-        color  = get_color(discipline, i)
+    for discipline in VALID_DISCIPLINES:
+        color  = DISCIPLINE_COLORS[discipline]
         values = pivot[discipline].values
         ax.plot(year_range, values,
                 marker='o', linewidth=2.5, markersize=7,
                 label=discipline, color=color)
         add_data_labels(ax, year_range, values, color, fontsize=8)
 
-    ax.set_title(
-        f"{title}\n(n = {n_articles} articles whose primary term is this set)",
-        fontsize=15, fontweight='bold', pad=14)
+    ax.set_title(title, fontsize=16, fontweight='bold', pad=16)
     ax.set_xlabel('Year', fontsize=13)
     ax.set_ylabel('Number of Articles', fontsize=13)
     ax.set_xticks(year_range)
@@ -440,31 +389,20 @@ for set_name, title, filename in per_disc_files:
     plt.tight_layout()
     plt.savefig(filename, dpi=150, bbox_inches='tight')
     plt.show()
-    print(f"✓ Saved {filename}  ({n_articles} articles)")
+    print(f"  ✓ {filename}  (n={int(pivot.values.sum())} articles)")
 
-# ── Verify total ─────────────────────────────────────────────
 grand_total = sum(int(article_pivot[s].values.sum()) for s in BIGRAM_SETS)
-print(f"\n  Article totals per graph:")
+print(f"\n  Article count per graph:")
 for s in BIGRAM_SETS:
-    print(f"    {s}: {int(article_pivot[s].values.sum())} articles")
-print(f"  GRAND TOTAL across 3 graphs: {grand_total} articles")
+    print(f"    {s}: {int(article_pivot[s].values.sum())}")
+print(f"  Grand total: {grand_total}")
 
 # ============================================================
-# DOWNLOAD ALL 5 FILES INDIVIDUALLY (no ZIP)
+# DOWNLOAD ALL 5 FILES
 # ============================================================
-print(f"\n{SEP}")
-print("DOWNLOADING FILES")
-print(SEP)
-
-all_downloads = (
-    [stats_file, combined_file]
-    + [fname for _, _, fname in per_disc_files]
-)
-
+all_downloads = [stats_file, combined_file] + [f for _, _, f in per_disc_files]
+print(f"\nDownloading {len(all_downloads)} files...")
 for fname in all_downloads:
     files.download(fname)
-    print(f"✓ {fname}")
-
-print(f"\nAll done! {len(all_downloads)} files downloaded:")
-for i, fname in enumerate(all_downloads, 1):
-    print(f"  {i}. {fname}")
+    print(f"  ✓ {fname}")
+print("\nDone.")
