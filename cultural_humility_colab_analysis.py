@@ -290,18 +290,32 @@ for set_name in BIGRAM_SETS:
 stats_df   = pd.DataFrame(rows)
 stats_file = 'mann_kendall_results.xlsx'
 with pd.ExcelWriter(stats_file, engine='openpyxl') as writer:
-    stats_df[stats_df['Discipline'] == 'ALL (Combined)'].drop(columns='Discipline').to_excel(
-        writer, sheet_name='Overall Trends', index=False)
-    stats_df[
-        (stats_df['Discipline'] != 'ALL (Combined)') &
+
+    # ── Graph 1: Combined line graph (all disciplines, mention counts) ──
+    # One row per term set showing the overall trend across all disciplines.
+    (stats_df[
+        (stats_df['Discipline'] == 'ALL (Combined)') &
         (stats_df['Metric'] == 'Mentions')
-    ].to_excel(writer, sheet_name='By Discipline (Mentions)', index=False)
-    stats_df[
-        (stats_df['Discipline'] != 'ALL (Combined)') &
-        (stats_df['Metric'] == 'Articles')
-    ].to_excel(writer, sheet_name='By Discipline (Articles)', index=False)
-    stats_df.to_excel(writer, sheet_name='All Stats', index=False)
-print(f"\n  ✓ Stats saved to {stats_file}")
+    ][['Term Set', 'Total', 'Trend', 'Theil-Sen Slope', 'p-value', 'Tau']]
+     .rename(columns={'Total': 'Total Mentions'})
+     .to_excel(writer, sheet_name='Graph 1 - Combined', index=False))
+
+    # ── Graphs 2–4: Per term set, article counts by discipline ───────────
+    # Each sheet = one graph. Rows = the 4 discipline lines on that graph.
+    for set_name, sheet_name in [
+        ('Humility Set',   'Graph 2 - Humility'),
+        ('Competence Set', 'Graph 3 - Competence'),
+        ('Awareness Set',  'Graph 4 - Awareness'),
+    ]:
+        (stats_df[
+            (stats_df['Term Set']    == set_name) &
+            (stats_df['Discipline']  != 'ALL (Combined)') &
+            (stats_df['Metric']      == 'Articles')
+        ][['Discipline', 'Total', 'Trend', 'Theil-Sen Slope', 'p-value', 'Tau']]
+         .rename(columns={'Total': 'Total Articles'})
+         .to_excel(writer, sheet_name=sheet_name, index=False))
+
+print(f"\n  ✓ Stats saved to {stats_file}  (4 sheets — one per graph)")
 
 # ============================================================
 # HELPER — data-point labels
